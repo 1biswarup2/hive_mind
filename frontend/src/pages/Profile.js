@@ -14,8 +14,9 @@ import { initials, statusLabel, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 export default function Profile() {
-  const { id } = useParams();
+  const { id: idParam } = useParams();
   const { user: me, refresh } = useAuth();
+  const id = idParam === "me" ? me?.id : idParam;
   const [u, setU] = useState(null);
   const [myReqs, setMyReqs] = useState([]);
   const [mySolved, setMySolved] = useState([]);
@@ -25,6 +26,7 @@ export default function Profile() {
   const isMe = me?.id === id;
 
   const load = async () => {
+    if (!id) return;
     const { data } = await api.get(`/users/${id}`);
     setU(data);
     setForm({
@@ -41,7 +43,7 @@ export default function Profile() {
     ]);
     setMyReqs(a.data); setMySolved(b.data);
   };
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line
 
   const save = async () => {
     try {

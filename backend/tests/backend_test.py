@@ -351,3 +351,57 @@ class TestFiles:
         }, timeout=30)
         d2 = s2.get(f"{API}/files/{fid}/download", timeout=30)
         assert d2.status_code == 404
+
+
+# ----------------- REGRESSION: iteration_1 fixes -----------------
+class TestRegressionIter1:
+    """Re-test the two prior issues from iteration_1.json"""
+
+    def test_get_users_me_works(self, admin_sess):
+        # New route GET /api/users/me must exist and return current user
+        r = admin_sess.get(f"{API}/users/me", timeout=30)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["email"] == ADMIN["email"]
+        assert data["role"] == "admin"
+        assert "id" in data
+        assert "_id" not in data  # no mongo objectid leak
+        # admin should have 200 credits after seed update
+        assert data.get("credits_balance") == 200, f"expected 200 credits, got {data.get('credits_balance')}"
+
+    def test_get_users_by_id_still_works(self, admin_sess):
+        # Resolve a known user id via /users/me then fetch /users/{id}
+        me = admin_sess.get(f"{API}/users/me", timeout=30).json()
+        uid = me["id"]
+        r = admin_sess.get(f"{API}/users/{uid}", timeout=30)
+        assert r.status_code == 200, r.text
+        assert r.json()["id"] == uid
+        # Non-existent id must 404 (no route conflict with /me)
+        r404 = admin_sess.get(f"{API}/users/does-not-exist-xyz", timeout=30)
+        assert r404.status_code == 404
+
+    def test_admin_redeem_affordable_reward(self, admin_sess):
+        # Pick an affordable reward (Amazon Gift Card ₹500 @ 100c)
+        rew = admin_sess.get(f"{API}/rewards", timeout=30).json()
+        me_before = admin_sess.get(f"{API}/users/me", timeout=30).json()
+        bal_before = me_before["credits_balance"]
+        target = next((x for x in rew if x["credits"] <= bal_before and x.get("stock", 0) > 0), None)
+        if not target:
+            pytest.skip("no affordable reward in stock")
+        stock_before = target["stock"]
+        r = admin_sess.post(f"{API}/rewards/redeem", json={"reward_id": target["id"]}, timeout=30)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "_id" not in body
+        assert body.get("reward_id") == target["id"]
+        # balance decremented
+        me_after = admin_sess.get(f"{API}/users/me", timeout=30).json()
+        assert me_after["credits_balance"] == bal_before - target["credits"]
+        # stock decremented
+        rew_after = admin_sess.get(f"{API}/rewards", timeout=30).json()
+        new_stock = next(x for x in rew_after if x["id"] == target["id"])["stock"]
+        assert new_stock == stock_before - 1
+        # redemption appears in my redemptions
+        myr = admin_sess.get(f"{API}/redemptions", timeout=30)
+        assert myr.status_code == 200
+        assert any(x.get("reward_id") == target["id"] for x in myr.json())

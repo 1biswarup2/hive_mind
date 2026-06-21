@@ -539,6 +539,11 @@ async def list_users(user: dict = Depends(get_current_user),
     return [public_user(u) for u in items]
 
 
+@api.get("/users/me")
+async def get_me(user: dict = Depends(get_current_user)):
+    return public_user(user)
+
+
 @api.get("/users/{user_id}")
 async def get_user(user_id: str, user: dict = Depends(get_current_user)):
     u = await db.users.find_one({"id": user_id, "org_id": user["org_id"]},
@@ -1105,6 +1110,20 @@ async def seed():
              "difficulty": "medium", "bounty_credits": 400,
              "creator_id": user_ids["priya@acme.com"], "department": "Engineering",
              "status": "completed", "claimed_by": user_ids["manager@acme.com"],
+             "claimed_at": now_iso(), "completed_at": now_iso()},
+            {"title": "Beta testers for our new dashboard analytics tool",
+             "description": "Need 5 internal teams to try our analytics dashboard for a week and share honest feedback.",
+             "category": "Product Feedback", "tags": ["beta", "analytics"],
+             "difficulty": "easy", "bounty_credits": 200,
+             "creator_id": user_ids["reviewer@acme.com"], "department": "Product",
+             "status": "completed", "claimed_by": user_ids["admin@acme.com"],
+             "claimed_at": now_iso(), "completed_at": now_iso()},
+            {"title": "Mentor for first-time engineering manager",
+             "description": "I just got promoted to EM and would love a mentor to discuss 1:1 cadence, performance reviews, and conflict resolution.",
+             "category": "Mentorship", "tags": ["mentorship", "leadership"],
+             "difficulty": "medium", "bounty_credits": 350,
+             "creator_id": user_ids["arjun@acme.com"], "department": "Marketing",
+             "status": "completed", "claimed_by": user_ids["priya@acme.com"],
              "claimed_at": now_iso(), "completed_at": now_iso()},
         ]
         for s in samples:

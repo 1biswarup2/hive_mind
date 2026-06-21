@@ -1,0 +1,38 @@
+{
+  "summary": "Retested the two prior regressions from iteration_1 and ran a smoke loop. Both regressions are RESOLVED: (1) GET /api/users/me now exists and returns the current user (no _id leak), and /app/profile/me resolves 'me' to the AuthContext user id, rendering the profile with edit-profile-btn visible, no overlay/runtime errors, no console errors. (2) Rewards redeem full UI flow works end-to-end: balance card shows 100c after seed (admin started at 200c — backend test consumed 100c earlier in this run, the seeded 200c was confirmed at start), Amazon Gift Card ₹500 @ 100c Redeem button is enabled, confirm-redeem dialog opens, clicking Confirm shows toast 'Redeemed: Amazon Gift Card ₹500', balance decrements to 0, redemption appears in 'My redemptions' tab (PENDING -100c), reward stock decremented from 99->98. Unaffordable rewards correctly display 'Need X more' on disabled buttons. Smoke loop: login (admin & priya) -> dashboard with KPIs/charts -> board (9 request cards) -> profile/me -> leaderboard -> rewards redeem all functional. Added a new TestRegressionIter1 class to /app/backend/tests/backend_test.py (3 tests, all passing).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Profile page (Skills & expertise section)", "issues": ["Tags rendered twice — once from expertise_tags and once from skills. Admin shows 'operations leadership operations leadership'; Priya shows 'python fastapi ml fintech python fastapi ml fintech'. Deduplicate before render or merge the two arrays into a Set."]},
+      {"screen": "Dashboard charts", "issues": ["Recharts ResponsiveContainer still emits width/height(-1) warnings on initial render — carryover from iteration_1, non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(LOW) Deduplicate Skills & Expertise tags in Profile.js — merge expertise_tags + skills into a Set before rendering to avoid duplicate badges."
+  ],
+  "critical_code_review_comments": [
+    "GET /api/users/me is correctly registered BEFORE GET /api/users/{user_id} in server.py (lines 542 and 547) — route ordering avoids the path-param conflict.",
+    "Profile.js correctly maps idParam==='me' to me?.id from AuthContext before fetching /api/users/{id}; this also covers the case where the backend /users/me route fails for any reason (defense in depth).",
+    "Skills & expertise duplication is purely a UI concern — backend stores both fields intentionally (expertise_tags is user-curated, skills may come from elsewhere). The render layer should de-duplicate.",
+    "Reward redemption stays PENDING — there is no admin UI for marking a redemption as fulfilled. If that's part of the spec, an admin redemptions queue page is missing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (3/3 new regression tests; previous 24/24 unaffected)", "frontend": "100% on retested flows"},
+  "test_credentials": "admin@acme.com / Admin@123 (seeded with 200c, balance now 0 after 2 successful redeems during testing); priya@acme.com / Priya@123 (350c); arjun@acme.com / Arjun@123",
+  "seed_data_creation": "Test consumed 200c worth of admin credits across 2 Amazon Gift Card ₹500 redemptions (1 from pytest, 1 from UI). Reward stock decreased from 99 -> 97 for that reward. If next run needs admin to have credits, re-seed via /app/scripts seeder or rely on lifecycle tests to award fresh credits.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Both iteration_1 regressions are fixed and verified at backend (pytest) and frontend (Playwright) levels. The only remaining cosmetic issue is duplicate Skills/Expertise tags on Profile page. Backend test file at /app/backend/tests/backend_test.py — new TestRegressionIter1 class covers users/me, users/{id}, and redeem-affordable. After this run, admin balance is depleted (0c); priya retains 350c — use priya for future redeem tests if admin is out of credits.",
+  "rca of the issue": "Iteration_1 RCA: (1) /app/profile/me crashed because Profile.js naively passed the URL param 'me' as a user_id to GET /api/users/{user_id}, which 404'd. Fix applied in two complementary places — backend adds @api.get('/users/me') route registered BEFORE the /users/{user_id} param route (FastAPI route ordering ensures /me matches first), and frontend Profile.js short-circuits with me?.id from AuthContext when idParam==='me'. Verified: page loads cleanly, no console errors, edit-profile-btn visible. (2) Redeem flow couldn't be exercised because admin had 0 credits. Fix: seed now creates 3 completed sample requests crediting admin (200c) and priya (350c). Verified by reading /api/users/me on fresh login (credits_balance=200) and executing full UI redeem with confirm dialog -> toast -> balance change -> redemption row appearing."
+}

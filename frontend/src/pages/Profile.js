@@ -133,13 +133,14 @@ export default function Profile() {
       </Card>
 
       {/* Skills */}
-      {(u.skills?.length || u.expertise_tags?.length) > 0 && (
+      {((u.skills?.length || 0) + (u.expertise_tags?.length || 0)) > 0 && (
         <Card className="border-slate-200">
           <CardContent className="p-6">
             <h3 className="font-display text-xl font-semibold tracking-tight mb-4">Skills & expertise</h3>
             <div className="flex flex-wrap gap-2">
-              {u.skills?.map((s) => <span key={s} className="text-xs font-mono bg-slate-100 border border-slate-200 px-2 py-1 rounded">{s}</span>)}
-              {u.expertise_tags?.map((s) => <span key={s} className="text-xs font-mono bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded">{s}</span>)}
+              {Array.from(new Set([...(u.expertise_tags || []), ...(u.skills || [])])).map((s) => (
+                <span key={s} className="text-xs font-mono bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded">{s}</span>
+              ))}
             </div>
           </CardContent>
         </Card>

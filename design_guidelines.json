@@ -1,0 +1,100 @@
+{
+  "theme": "Archetype 4 (Swiss & High-Contrast), Light Theme",
+  "vibe": "Enterprise-grade (Jira/ClickUp/Linear level), gamified contribution economy, high authority, clean and functional. Avoid generic SaaS purple-gradient AI-slop.",
+  "colors": {
+    "primary": "#004AE0",
+    "primary_hover": "#003BBB",
+    "background": "#F9FAFB",
+    "surface": "#FFFFFF",
+    "text_main": "#0A0A0A",
+    "text_muted": "#4B5563",
+    "border": "#E5E7EB",
+    "gamification": {
+      "bronze": "#CD7F32",
+      "silver": "#C0C0C0",
+      "gold": "#FFD700",
+      "platinum": "#E5E4E2",
+      "diamond": "#B9F2FF"
+    },
+    "status": {
+      "open": "#3B82F6",
+      "claimed": "#8B5CF6",
+      "in_progress": "#F59E0B",
+      "submitted": "#10B981",
+      "under_review": "#6366F1",
+      "completed": "#059669",
+      "rejected": "#EF4444"
+    }
+  },
+  "typography": {
+    "headings": "Cabinet Grotesk, font-sans, tracking-tight",
+    "body": "IBM Plex Sans, font-sans, tracking-normal",
+    "mono": "JetBrains Mono, font-mono, text-sm",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-bold leading-none tracking-tighter",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-bold leading-tight tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base leading-relaxed text-gray-700",
+      "small": "text-sm text-gray-500",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-gray-500"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "section_padding": "py-16 sm:py-24",
+    "card_padding": "p-6 sm:p-8",
+    "grid_bento": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "kanban_board": "flex overflow-x-auto snap-x snap-mandatory gap-6 pb-8",
+    "kanban_column": "min-w-[320px] max-w-[350px] snap-center flex flex-col gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200 h-full",
+    "surface_styles": {
+      "cards": "bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200",
+      "glass": "bg-white/70 backdrop-blur-xl border border-white/20 shadow-sm",
+      "interactive": "hover:-translate-y-1 transition-transform duration-200"
+    }
+  },
+  "components": {
+    "buttons": "rounded-lg font-medium px-4 py-2 transition-all duration-200 flex items-center justify-center gap-2",
+    "inputs": "bg-white border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-primary focus:border-primary w-full text-gray-900",
+    "badges": "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200",
+    "avatar": "h-10 w-10 rounded-full border-2 border-white shadow-sm object-cover"
+  },
+  "pages": {
+    "landing_auth": "Clean split-screen layout. Left side: Login form, centered, minimal. Right side: Abstract architectural image (representing structure/hive).",
+    "dashboard": "Bento grid layout for key metrics (Credits, Rep, Open Requests). Recent activity feed. Quick actions.",
+    "request_board": "Kanban-style horizontal scrolling columns. Dense information architecture, easy drag/drop or status update.",
+    "request_detail": "Two-column layout (Main content + Sidebar). Main: Title, desc, discussion, file uploads. Sidebar: Status, Assignees, Bounty, Tags.",
+    "leaderboard": "List layout with rank highlighting. Top 3 get special visual treatment (Gold, Silver, Bronze accents).",
+    "rewards": "Grid of cards for items. Prominent 'Current Balance' sticky header. High-quality imagery for physical items.",
+    "profile": "Header section with Avatar, Name, Reputation Score, Badge display. Tabs for 'Completed Requests', 'Skills', 'Activity'.",
+    "admin": "Data-heavy tables for user management and org settings. Clear toggle switches, minimal aesthetic."
+  },
+  "testing_requirements": "CRITICAL: All interactive and key informational elements MUST include a 'data-testid' attribute using kebab-case and role-based naming (e.g., data-testid='submit-request-button').",
+  "icons_library": "lucide-react",
+  "images": {
+    "login_background": {
+      "url": "https://images.pexels.com/photos/3137072/pexels-photo-3137072.jpeg",
+      "description": "Black and white abstract geometric architecture"
+    },
+    "avatars": [
+      {"url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3R8ZW58MHx8fHwxNzgyMDYzNzExfDA&ixlib=rb-4.1.0&q=85", "description": "smiling woman"},
+      {"url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3R8ZW58MHx8fHwxNzgyMDYzNzExfDA&ixlib=rb-4.1.0&q=85", "description": "man in v-neck"},
+      {"url": "https://images.unsplash.com/photo-1609436132311-e4b0c9370469?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3R8ZW58MHx8fHwxNzgyMDYzNzExfDA&ixlib=rb-4.1.0&q=85", "description": "woman in scarf"},
+      {"url": "https://images.unsplash.com/photo-1588178454780-441fa5b99fa5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA4Mzl8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3R8ZW58MHx8fHwxNzgyMDYzNzExfDA&ixlib=rb-4.1.0&q=85", "description": "man in black suit"},
+      {"url": "https://images.pexels.com/photos/33646670/pexels-photo-33646670.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940", "description": "confident woman in red tie"}
+    ],
+    "rewards_items": [
+      {"url": "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBsaWZlc3R5bGUlMjB0ZWNoJTIwZ2FkZ2V0fGVufDB8fHx8MTc4MjA2MzcxMXww&ixlib=rb-4.1.0&q=85", "description": "iPad and lifestyle items"},
+      {"url": "https://images.unsplash.com/photo-1615655406736-b37c4fabf923?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBsaWZlc3R5bGUlMjB0ZWNoJTIwZ2FkZ2V0fGVufDB8fHx8MTc4MjA2MzcxMXww&ixlib=rb-4.1.0&q=85", "description": "desk with electronics and microphone"},
+      {"url": "https://images.pexels.com/photos/10703759/pexels-photo-10703759.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940", "description": "flat lay of tech gadgets"}
+    ]
+  },
+  "instructions_to_main_agent": {
+    "files": "Use .js files. DO NOT USE .tsx.",
+    "testing": "CRITICAL: You must add data-testid attributes to ALL interactive elements.",
+    "navigation": "Sticky crystal glass header (backdrop-blur-xl bg-white/80 border-b border-gray-200).",
+    "kanban_cards": "Flat background, 1px subtle border, hover: shadow-md, translateY(-2px). Show avatar stack for assignees.",
+    "modals": "Use Shadcn Dialog, backdrop blur on overlay, centered layout.",
+    "images": "Use the exact image URLs provided in this JSON. DO NOT use placeholder services."
+  }
+}

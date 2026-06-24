@@ -11,7 +11,7 @@ export default function Landing() {
             <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 grid place-items-center text-white">
               <Hexagon className="h-5 w-5" />
             </div>
-            <span className="font-display font-bold text-lg">HiveMind</span>
+            <span className="font-display font-bold text-lg">Jugaad</span>
           </Link>
           <div className="flex items-center gap-3">
             <Link to="/login" className="text-sm font-medium hover:text-blue-600" data-testid="nav-signin">
@@ -35,7 +35,7 @@ export default function Landing() {
             finally compounding.
           </h1>
           <p className="mt-6 max-w-2xl text-lg text-slate-600 leading-relaxed">
-            HiveMind is an internal marketplace where employees post real problems —
+            Jugaad is an internal marketplace where employees post real problems —
             intros, vendors, hiring, research, market intel — and earn credits when they solve
             them for each other. Not a ticketing tool. A contribution economy.
           </p>
@@ -79,7 +79,7 @@ export default function Landing() {
             Stop losing the smartest person you didn't know worked here.
           </h3>
           <p className="mt-4 text-slate-600 text-lg">
-            HiveMind makes expertise discoverable, incentivised, and measurable.
+            Jugaad makes expertise discoverable, incentivised, and measurable.
           </p>
           <div className="mt-8">
             <Button asChild size="lg" data-testid="footer-cta" className="bg-blue-600 hover:bg-blue-700 h-12 px-6">
@@ -90,7 +90,7 @@ export default function Landing() {
       </section>
 
       <footer className="border-t border-slate-200 py-8 text-center text-sm text-slate-500">
-        © {new Date().getFullYear()} HiveMind
+        © {new Date().getFullYear()} Jugaad
       </footer>
     </div>
   );

@@ -37,9 +37,11 @@ export default function Dashboard() {
             Your balance is <span className="font-mono font-semibold">{stats.my_balance}</span> credits.
           </p>
         </div>
-        <Button asChild data-testid="dashboard-create-btn" className="bg-blue-600 hover:bg-blue-700">
-          <Link to="/app/requests/new">Post a request <ArrowRight className="h-4 w-4 ml-1" /></Link>
-        </Button>
+        {user?.role === "admin" && (
+          <Button asChild data-testid="dashboard-create-btn" className="bg-blue-600 hover:bg-blue-700">
+            <Link to="/app/requests/new">Post a request <ArrowRight className="h-4 w-4 ml-1" /></Link>
+          </Button>
+        )}
       </div>
 
       {/* KPI Bento */}

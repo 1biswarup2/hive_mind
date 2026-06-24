@@ -1,0 +1,59 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017}
+      DB_NAME: ${DB_NAME:-hivemind}
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-production}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
+      EMERGENT_LLM_KEY: ${EMERGENT_LLM_KEY:-}
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      APP_URL: ${APP_URL:-http://localhost:8090}
+      APP_NAME: ${APP_NAME:-Jugaad}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
+      VERIFICATION_TOKEN_TTL_HOURS: ${VERIFICATION_TOKEN_TTL_HOURS:-24}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        REACT_APP_BACKEND_URL: ""
+        REACT_APP_SHOW_DEMO_HINTS: "false"
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:

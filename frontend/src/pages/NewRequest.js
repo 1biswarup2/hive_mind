@@ -54,7 +54,8 @@ export default function NewRequest() {
       toast.success("Request published");
       navigate(`/app/requests/${data.id}`);
     } catch (err) {
-      toast.error(formatApiError(err.response?.data?.detail) || err.message);
+      const msg = formatApiError(err.response?.data?.detail) || err.message;
+      toast.error(msg.includes("verify") ? `${msg} Use the banner above to resend.` : msg);
     } finally {
       setLoading(false);
     }

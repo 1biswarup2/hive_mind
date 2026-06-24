@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import api, { formatApiError } from "@/lib/api";
+import api, { formatApiError, fileDownloadUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,7 +49,10 @@ export default function RequestDetail() {
       await api.post(`/requests/${id}/claim`);
       toast.success("Request claimed");
       load();
-    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+    } catch (e) {
+      const msg = formatApiError(e.response?.data?.detail) || e.message;
+      toast.error(msg.includes("verify") ? `${msg} Use the banner above to resend.` : msg);
+    }
   };
 
   const onUnclaim = async () => {
@@ -93,7 +96,10 @@ export default function RequestDetail() {
       toast.success("Solution submitted");
       setSolText(""); setSolLinks(""); setFiles([]);
       load();
-    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+    } catch (e) {
+      const msg = formatApiError(e.response?.data?.detail) || e.message;
+      toast.error(msg.includes("verify") ? `${msg} Use the banner above to resend.` : msg);
+    }
     finally { setSubmitting(false); }
   };
 
@@ -109,7 +115,10 @@ export default function RequestDetail() {
       );
       setReviewOpen(false); setReviewFeedback(""); setReviewTarget(null);
       load();
-    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+    } catch (e) {
+      const msg = formatApiError(e.response?.data?.detail) || e.message;
+      toast.error(msg.includes("verify") ? `${msg} Use the banner above to resend.` : msg);
+    }
   };
 
   return (
@@ -219,7 +228,7 @@ export default function RequestDetail() {
                     {s.file_ids?.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-3">
                         {s.file_ids.map((fid) => (
-                          <a key={fid} href={`${process.env.REACT_APP_BACKEND_URL}/api/files/${fid}/download`} target="_blank" rel="noreferrer" className="text-xs bg-slate-100 border border-slate-200 rounded px-2 py-1 hover:bg-slate-200">
+                          <a key={fid} href={fileDownloadUrl(fid)} target="_blank" rel="noreferrer" className="text-xs bg-slate-100 border border-slate-200 rounded px-2 py-1 hover:bg-slate-200">
                             <Paperclip className="h-3 w-3 inline mr-1" /> Attachment
                           </a>
                         ))}

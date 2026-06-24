@@ -2,10 +2,10 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard, KanbanSquare, Trophy, Gift, User, Settings, LogOut,
-  Bell, Plus, Search, Hexagon
+  Bell, Plus, Search, Hexagon, Mail
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import api from "@/lib/api";
+import api, { formatApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { initials, timeAgo } from "@/lib/utils";
+import { toast } from "sonner";
 
 const navItems = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -26,6 +27,19 @@ export default function AppShell({ children }) {
   const navigate = useNavigate();
   const [notifs, setNotifs] = useState([]);
   const [q, setQ] = useState("");
+  const [resending, setResending] = useState(false);
+
+  const resendVerification = async () => {
+    setResending(true);
+    try {
+      await api.post("/auth/resend-verification");
+      toast.success("Verification email sent. Check your inbox.");
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Could not resend email");
+    } finally {
+      setResending(false);
+    }
+  };
 
   const loadNotifs = async () => {
     try {
@@ -49,6 +63,31 @@ export default function AppShell({ children }) {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {user && user.email_verified === false && (
+        <div
+          className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 text-sm text-amber-900"
+          data-testid="verify-email-banner"
+        >
+          <div className="max-w-[1400px] mx-auto flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Mail className="h-4 w-4 shrink-0" />
+              <span>
+                Verify <strong>{user.email}</strong> to claim tickets and redeem rewards.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-amber-300 bg-white hover:bg-amber-100"
+              onClick={resendVerification}
+              disabled={resending}
+              data-testid="resend-verification-btn"
+            >
+              {resending ? "Sending…" : "Resend email"}
+            </Button>
+          </div>
+        </div>
+      )}
       <header className="glass-nav sticky top-0 z-40">
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 h-16 flex items-center gap-6">
           <Link to="/app" className="flex items-center gap-2 group" data-testid="brand-link">
@@ -56,7 +95,7 @@ export default function AppShell({ children }) {
               <Hexagon className="h-5 w-5" />
             </div>
             <div className="font-display font-bold text-lg leading-none">
-              HiveMind
+              Jugaad
               <div className="text-[10px] font-mono text-slate-500 tracking-widest mt-0.5">
                 {org?.name?.toUpperCase()}
               </div>
@@ -108,16 +147,18 @@ export default function AppShell({ children }) {
             />
           </div>
 
-          <Button
-            asChild
-            size="sm"
-            data-testid="header-create-request-btn"
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            <Link to="/app/requests/new">
-              <Plus className="h-4 w-4 mr-1" /> New Request
-            </Link>
-          </Button>
+          {user?.role === "admin" && (
+            <Button
+              asChild
+              size="sm"
+              data-testid="header-create-request-btn"
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              <Link to="/app/requests/new">
+                <Plus className="h-4 w-4 mr-1" /> New Request
+              </Link>
+            </Button>
+          )}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -10,11 +10,17 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import io
+import asyncio
+import time
 import uuid
 import bcrypt
 import jwt
 import logging
+import hashlib
+import secrets
 import requests
+from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
@@ -27,13 +33,15 @@ from fastapi import (
     Depends,
     UploadFile,
     File,
-    Query,
-    Header,
+    BackgroundTasks,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+from pymongo import ReturnDocument
+
+from email_service import notify_org_new_request, send_verification_email
 
 # ----- Config -----
 JWT_ALGORITHM = "HS256"
@@ -42,6 +50,15 @@ REFRESH_TTL_DAYS = 7
 APP_NAME = os.environ.get("APP_NAME", "hivemind")
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
 EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "production").lower()
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true" if ENVIRONMENT == "production" else "false").lower() == "true"
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax" if ENVIRONMENT == "production" else "none")
+SEED_DEMO_DATA = os.environ.get("SEED_DEMO_DATA", "false").lower() in ("1", "true", "yes")
+RATE_LIMIT_WINDOW = int(os.environ.get("RATE_LIMIT_WINDOW", "60"))
+RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX", "30"))
+REQUIRE_EMAIL_VERIFICATION = os.environ.get("REQUIRE_EMAIL_VERIFICATION", "true").lower() in ("1", "true", "yes")
+VERIFICATION_TOKEN_TTL_HOURS = int(os.environ.get("VERIFICATION_TOKEN_TTL_HOURS", "24"))
+_login_attempts: dict[str, list[float]] = defaultdict(list)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("hivemind")
@@ -50,7 +67,6 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-app = FastAPI(title="HiveMind API")
 api = APIRouter(prefix="/api")
 
 # ----- Default categories & rewards -----
@@ -125,10 +141,10 @@ def create_refresh_token(user_id: str, org_id: str) -> str:
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie("access_token", access, httponly=True, secure=True,
-                        samesite="none", max_age=ACCESS_TTL_MIN * 60, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=True,
-                        samesite="none", max_age=REFRESH_TTL_DAYS * 86400, path="/")
+    response.set_cookie("access_token", access, httponly=True, secure=COOKIE_SECURE,
+                        samesite=COOKIE_SAMESITE, max_age=ACCESS_TTL_MIN * 60, path="/")
+    response.set_cookie("refresh_token", refresh, httponly=True, secure=COOKIE_SECURE,
+                        samesite=COOKIE_SAMESITE, max_age=REFRESH_TTL_DAYS * 86400, path="/")
 
 
 def clear_auth_cookies(response: Response):
@@ -152,6 +168,7 @@ def public_user(u: dict) -> dict:
         "credits_balance": u.get("credits_earned", 0) - u.get("credits_redeemed", 0),
         "badges": u.get("badges", []),
         "created_at": u.get("created_at"),
+        "email_verified": u.get("email_verified", True),
     }
 
 
@@ -186,26 +203,74 @@ def require_role(*roles: str):
     return _dep
 
 
+async def require_verified_email(user: dict = Depends(get_current_user)):
+    if REQUIRE_EMAIL_VERIFICATION and not user.get("email_verified", True):
+        raise HTTPException(403, "Please verify your email first")
+    return user
+
+
+async def require_verified_admin(user: dict = Depends(require_verified_email)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Insufficient permissions")
+    return user
+
+
+def _hash_verification_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def issue_verification_token(user_id: str, email: str) -> str:
+    raw = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=VERIFICATION_TOKEN_TTL_HOURS)
+    await db.email_verification_tokens.delete_many({"user_id": user_id})
+    await db.email_verification_tokens.insert_one({
+        "token_hash": _hash_verification_token(raw),
+        "user_id": user_id,
+        "email": email.lower().strip(),
+        "expires_at": expires,
+    })
+    return raw
+
+
+async def _send_verification_email_task(email: str, name: str, raw_token: str):
+    await asyncio.to_thread(send_verification_email, email, name, raw_token)
+
+
+def check_rate_limit(request: Request):
+    """Simple in-memory rate limit for auth endpoints (per client IP)."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window = [t for t in _login_attempts[ip] if now - t < RATE_LIMIT_WINDOW]
+    if len(window) >= RATE_LIMIT_MAX:
+        raise HTTPException(429, "Too many attempts. Please try again later.")
+    window.append(now)
+    _login_attempts[ip] = window
+
+
 # ----- Pydantic models -----
 class OrgRegister(BaseModel):
     org_name: str
     org_domain: str
     admin_name: str
     admin_email: EmailStr
-    admin_password: str = Field(min_length=6)
+    admin_password: str = Field(min_length=8)
 
 
 class UserRegister(BaseModel):
     org_domain: str
     name: str
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     department: Optional[str] = None
 
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+
+class VerifyEmailIn(BaseModel):
+    token: str
 
 
 class UserUpdate(BaseModel):
@@ -261,13 +326,26 @@ class CategoryCreate(BaseModel):
 
 class RewardCreate(BaseModel):
     name: str
-    credits: int
+    credits: int = Field(ge=1)
     image: Optional[str] = None
-    stock: int = 100
+    stock: int = Field(ge=0, default=100)
+    reward_type: Literal["catalog", "cash"] = "catalog"
+
+
+class RewardUpdate(BaseModel):
+    name: Optional[str] = None
+    credits: Optional[int] = Field(None, ge=1)
+    image: Optional[str] = None
+    stock: Optional[int] = Field(None, ge=0)
+    active: Optional[bool] = None
 
 
 class RewardRedeem(BaseModel):
     reward_id: str
+
+
+class CashRedeem(BaseModel):
+    credits: int = Field(ge=100, description="Minimum 100 credits for cash payout")
 
 
 # ----- Storage -----
@@ -377,7 +455,9 @@ async def notify(org_id: str, user_id: str, message: str, link: str = ""):
 
 # ===== AUTH =====
 @api.post("/auth/register-org")
-async def register_org(payload: OrgRegister, response: Response):
+async def register_org(payload: OrgRegister, request: Request, response: Response,
+                       background_tasks: BackgroundTasks):
+    check_rate_limit(request)
     domain = payload.org_domain.lower().strip()
     if await db.organizations.find_one({"domain": domain}):
         raise HTTPException(400, "Organization domain already exists")
@@ -388,15 +468,14 @@ async def register_org(payload: OrgRegister, response: Response):
     org_id = new_id()
     org = {
         "id": org_id, "name": payload.org_name, "domain": domain,
-        "logo": None, "credit_value_inr": 5, "categories": DEFAULT_CATEGORIES.copy(),
+        "logo": None, "credit_value_inr": 5, "cash_redemption_enabled": True, "categories": DEFAULT_CATEGORIES.copy(),
         "departments": DEFAULT_DEPARTMENTS.copy(),
         "created_at": now_iso(),
     }
     await db.organizations.insert_one(org)
 
-    # seed default rewards for this org
     for r in DEFAULT_REWARDS:
-        await db.rewards.insert_one({**r, "id": new_id(), "org_id": org_id, "active": True})
+        await db.rewards.insert_one({**r, "id": new_id(), "org_id": org_id, "active": True, "reward_type": "catalog"})
 
     user_id = new_id()
     user = {
@@ -405,9 +484,11 @@ async def register_org(payload: OrgRegister, response: Response):
         "role": "admin", "department": "Operations", "designation": "Admin",
         "expertise_tags": [], "skills": [], "avatar_url": None,
         "reputation_score": 0, "credits_earned": 0, "credits_redeemed": 0,
-        "badges": [], "created_at": now_iso(),
+        "badges": [], "email_verified": False, "created_at": now_iso(),
     }
     await db.users.insert_one(user)
+    raw_token = await issue_verification_token(user_id, email)
+    background_tasks.add_task(_send_verification_email_task, email, payload.admin_name, raw_token)
 
     access = create_access_token(user_id, org_id)
     refresh = create_refresh_token(user_id, org_id)
@@ -417,7 +498,9 @@ async def register_org(payload: OrgRegister, response: Response):
 
 
 @api.post("/auth/register")
-async def register_user(payload: UserRegister, response: Response):
+async def register_user(payload: UserRegister, request: Request, response: Response,
+                        background_tasks: BackgroundTasks):
+    check_rate_limit(request)
     domain = payload.org_domain.lower().strip()
     org = await db.organizations.find_one({"domain": domain}, {"_id": 0})
     if not org:
@@ -433,9 +516,13 @@ async def register_user(payload: UserRegister, response: Response):
         "role": "employee", "department": payload.department or "Engineering",
         "designation": None, "expertise_tags": [], "skills": [],
         "avatar_url": None, "reputation_score": 0, "credits_earned": 0,
-        "credits_redeemed": 0, "badges": [], "created_at": now_iso(),
+        "credits_redeemed": 0, "badges": [], "email_verified": False,
+        "created_at": now_iso(),
     }
     await db.users.insert_one(user)
+    raw_token = await issue_verification_token(user_id, email)
+    background_tasks.add_task(_send_verification_email_task, email, payload.name, raw_token)
+
     access = create_access_token(user_id, org["id"])
     refresh = create_refresh_token(user_id, org["id"])
     set_auth_cookies(response, access, refresh)
@@ -444,7 +531,8 @@ async def register_user(payload: UserRegister, response: Response):
 
 
 @api.post("/auth/login")
-async def login(payload: LoginIn, response: Response):
+async def login(payload: LoginIn, request: Request, response: Response):
+    check_rate_limit(request)
     email = payload.email.lower().strip()
     user = await db.users.find_one({"email": email}, {"_id": 0})
     if not user or not verify_password(payload.password, user["password_hash"]):
@@ -478,11 +566,39 @@ async def refresh_token(request: Request, response: Response):
         if payload.get("type") != "refresh":
             raise HTTPException(401, "Invalid token")
         access = create_access_token(payload["sub"], payload["org"])
-        response.set_cookie("access_token", access, httponly=True, secure=True,
-                            samesite="none", max_age=ACCESS_TTL_MIN * 60, path="/")
+        response.set_cookie("access_token", access, httponly=True, secure=COOKIE_SECURE,
+                            samesite=COOKIE_SAMESITE, max_age=ACCESS_TTL_MIN * 60, path="/")
         return {"ok": True}
     except jwt.PyJWTError:
         raise HTTPException(401, "Invalid token")
+
+
+@api.post("/auth/verify-email")
+async def verify_email(payload: VerifyEmailIn):
+    token_hash = _hash_verification_token(payload.token.strip())
+    rec = await db.email_verification_tokens.find_one({"token_hash": token_hash})
+    if not rec:
+        raise HTTPException(400, "Invalid or expired verification link")
+    expires = rec["expires_at"]
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires < datetime.now(timezone.utc):
+        await db.email_verification_tokens.delete_many({"user_id": rec["user_id"]})
+        raise HTTPException(400, "Verification link has expired. Please request a new one.")
+    await db.users.update_one({"id": rec["user_id"]}, {"$set": {"email_verified": True}})
+    await db.email_verification_tokens.delete_many({"user_id": rec["user_id"]})
+    return {"ok": True, "email_verified": True}
+
+
+@api.post("/auth/resend-verification")
+async def resend_verification(request: Request, background_tasks: BackgroundTasks,
+                              user: dict = Depends(get_current_user)):
+    check_rate_limit(request)
+    if user.get("email_verified", True):
+        return {"ok": True, "message": "Email already verified"}
+    raw_token = await issue_verification_token(user["id"], user["email"])
+    background_tasks.add_task(_send_verification_email_task, user["email"], user.get("name", ""), raw_token)
+    return {"ok": True, "message": "Verification email sent"}
 
 
 # ===== ORG =====
@@ -494,7 +610,7 @@ async def get_org(user: dict = Depends(get_current_user)):
 
 @api.patch("/org")
 async def update_org(payload: dict, user: dict = Depends(require_role("admin"))):
-    allowed = {"name", "logo", "credit_value_inr", "categories", "departments"}
+    allowed = {"name", "logo", "credit_value_inr", "categories", "departments", "cash_redemption_enabled"}
     upd = {k: v for k, v in payload.items() if k in allowed}
     if upd:
         await db.organizations.update_one({"id": user["org_id"]}, {"$set": upd})
@@ -613,7 +729,11 @@ async def list_requests(
 
 
 @api.post("/requests")
-async def create_request(payload: RequestCreate, user: dict = Depends(get_current_user)):
+async def create_request(
+    payload: RequestCreate,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_verified_admin),
+):
     rid = new_id()
     doc = {
         "id": rid, "org_id": user["org_id"], "creator_id": user["id"],
@@ -629,6 +749,7 @@ async def create_request(payload: RequestCreate, user: dict = Depends(get_curren
     await db.requests_col.insert_one(doc)
     doc.pop("_id", None)
     await log_audit(user["org_id"], user["id"], "request_created", rid)
+    background_tasks.add_task(notify_org_new_request, db, user["org_id"], doc, user)
     return doc
 
 
@@ -667,22 +788,26 @@ async def update_request(rid: str, payload: RequestUpdate, user: dict = Depends(
 
 
 @api.post("/requests/{rid}/claim")
-async def claim_request(rid: str, user: dict = Depends(get_current_user)):
+async def claim_request(rid: str, user: dict = Depends(require_verified_email)):
     r = await db.requests_col.find_one({"id": rid, "org_id": user["org_id"]})
     if not r:
         raise HTTPException(404, "Request not found")
-    if r["status"] not in ("open",):
-        raise HTTPException(400, f"Cannot claim a request in '{r['status']}' status")
     if r["creator_id"] == user["id"]:
         raise HTTPException(400, "You cannot claim your own request")
-    await db.requests_col.update_one({"id": rid}, {"$set": {
-        "status": "claimed", "claimed_by": user["id"],
-        "claimed_at": now_iso(), "updated_at": now_iso(),
-    }})
+    updated = await db.requests_col.find_one_and_update(
+        {"id": rid, "org_id": user["org_id"], "status": "open", "claimed_by": None},
+        {"$set": {
+            "status": "claimed", "claimed_by": user["id"],
+            "claimed_at": now_iso(), "updated_at": now_iso(),
+        }},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(400, f"Cannot claim a request in '{r.get('status', 'unknown')}' status")
     await notify(user["org_id"], r["creator_id"],
                  f"{user['name']} claimed your request: {r['title']}", f"/requests/{rid}")
     await log_audit(user["org_id"], user["id"], "request_claimed", rid)
-    return await db.requests_col.find_one({"id": rid}, {"_id": 0})
+    return updated
 
 
 @api.post("/requests/{rid}/unclaim")
@@ -804,21 +929,10 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
 
 
 @api.get("/files/{fid}/download")
-async def download_file(fid: str, request: Request,
-                        auth: Optional[str] = Query(None)):
-    # allow query-token auth for <img src>
-    if auth and not request.cookies.get("access_token"):
-        request.cookies.__dict__.setdefault("_dict", {})
-    # require auth: reuse dependency manually
-    token = request.cookies.get("access_token") or auth
-    if not token:
-        raise HTTPException(401, "Not authenticated")
-    try:
-        payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGORITHM])
-        org_id = payload["org"]
-    except jwt.PyJWTError:
-        raise HTTPException(401, "Invalid token")
-    rec = await db.files.find_one({"id": fid, "org_id": org_id, "is_deleted": False}, {"_id": 0})
+async def download_file(fid: str, user: dict = Depends(get_current_user)):
+    rec = await db.files.find_one(
+        {"id": fid, "org_id": user["org_id"], "is_deleted": False}, {"_id": 0}
+    )
     if not rec:
         raise HTTPException(404, "File not found")
     data, ct = get_object(rec["storage_path"])
@@ -830,47 +944,127 @@ async def download_file(fid: str, request: Request,
 # ===== REWARDS =====
 @api.get("/rewards")
 async def list_rewards(user: dict = Depends(get_current_user)):
-    items = await db.rewards.find({"org_id": user["org_id"], "active": True}, {"_id": 0}).to_list(500)
+    items = await db.rewards.find(
+        {"org_id": user["org_id"], "active": True, "reward_type": {"$ne": "cash"}},
+        {"_id": 0},
+    ).to_list(500)
+    return items
+
+
+@api.get("/rewards/admin")
+async def list_rewards_admin(user: dict = Depends(require_role("admin"))):
+    items = await db.rewards.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return items
 
 
 @api.post("/rewards")
 async def create_reward(payload: RewardCreate, user: dict = Depends(require_role("admin"))):
-    doc = {"id": new_id(), "org_id": user["org_id"], "name": payload.name,
-           "credits": payload.credits, "image": payload.image, "stock": payload.stock,
-           "active": True, "created_at": now_iso()}
+    doc = {
+        "id": new_id(), "org_id": user["org_id"], "name": payload.name,
+        "credits": payload.credits, "image": payload.image, "stock": payload.stock,
+        "reward_type": payload.reward_type, "active": True, "created_at": now_iso(),
+    }
     await db.rewards.insert_one(doc)
     doc.pop("_id", None)
+    await log_audit(user["org_id"], user["id"], "reward_created", doc["id"], {"name": payload.name})
     return doc
 
 
-@api.post("/rewards/redeem")
-async def redeem(payload: RewardRedeem, user: dict = Depends(get_current_user)):
-    reward = await db.rewards.find_one({"id": payload.reward_id, "org_id": user["org_id"]}, {"_id": 0})
-    if not reward or not reward.get("active"):
-        raise HTTPException(404, "Reward not available")
-    if reward.get("stock", 0) <= 0:
-        raise HTTPException(400, "Reward out of stock")
-    balance = user.get("credits_earned", 0) - user.get("credits_redeemed", 0)
-    if balance < reward["credits"]:
-        raise HTTPException(400, f"Insufficient credits (need {reward['credits']}, have {balance})")
-    await db.users.update_one({"id": user["id"]}, {"$inc": {"credits_redeemed": reward["credits"]}})
-    await db.rewards.update_one({"id": reward["id"]}, {"$inc": {"stock": -1}})
+@api.patch("/rewards/{reward_id}")
+async def update_reward(reward_id: str, payload: RewardUpdate,
+                        user: dict = Depends(require_role("admin"))):
+    reward = await db.rewards.find_one({"id": reward_id, "org_id": user["org_id"]})
+    if not reward:
+        raise HTTPException(404, "Reward not found")
+    upd = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if upd:
+        await db.rewards.update_one({"id": reward_id}, {"$set": upd})
+    await log_audit(user["org_id"], user["id"], "reward_updated", reward_id, upd)
+    return await db.rewards.find_one({"id": reward_id}, {"_id": 0})
+
+
+async def _redeem_credits(user: dict, credits: int, reward_name: str, reward_id: Optional[str],
+                          redemption_type: str, extra: dict = None):
+    user_result = await db.users.find_one_and_update(
+        {
+            "id": user["id"],
+            "$expr": {
+                "$gte": [
+                    {"$subtract": ["$credits_earned", "$credits_redeemed"]},
+                    credits,
+                ]
+            },
+        },
+        {"$inc": {"credits_redeemed": credits}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not user_result:
+        balance = user.get("credits_earned", 0) - user.get("credits_redeemed", 0)
+        raise HTTPException(400, f"Insufficient credits (need {credits}, have {balance})")
+
     redemption = {
         "id": new_id(), "org_id": user["org_id"], "user_id": user["id"],
-        "reward_id": reward["id"], "reward_name": reward["name"],
-        "credits": reward["credits"], "status": "pending",
+        "reward_id": reward_id, "reward_name": reward_name,
+        "credits": credits, "status": "pending",
+        "redemption_type": redemption_type,
         "created_at": now_iso(),
+        **(extra or {}),
     }
     await db.redemptions.insert_one(redemption)
     redemption.pop("_id", None)
     await db.transactions.insert_one({
         "id": new_id(), "org_id": user["org_id"], "source_user": user["id"],
-        "destination_user": None, "credits": reward["credits"],
-        "transaction_type": "redeem", "reason": f"Redeemed: {reward['name']}",
+        "destination_user": None, "credits": credits,
+        "transaction_type": "redeem", "reason": f"Redeemed: {reward_name}",
         "request_id": None, "timestamp": now_iso(),
     })
+    return redemption
+
+
+@api.post("/rewards/redeem")
+async def redeem(payload: RewardRedeem, user: dict = Depends(require_verified_email)):
+    reward = await db.rewards.find_one(
+        {"id": payload.reward_id, "org_id": user["org_id"], "active": True,
+         "reward_type": {"$ne": "cash"}},
+        {"_id": 0},
+    )
+    if not reward:
+        raise HTTPException(404, "Reward not available")
+
+    stock_result = await db.rewards.find_one_and_update(
+        {"id": reward["id"], "org_id": user["org_id"], "active": True, "stock": {"$gt": 0}},
+        {"$inc": {"stock": -1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not stock_result:
+        raise HTTPException(400, "Reward out of stock")
+
+    try:
+        redemption = await _redeem_credits(
+            user, reward["credits"], reward["name"], reward["id"], "catalog"
+        )
+    except HTTPException:
+        await db.rewards.update_one({"id": reward["id"]}, {"$inc": {"stock": 1}})
+        raise
+
     await log_audit(user["org_id"], user["id"], "reward_redeemed", reward["id"])
+    return redemption
+
+
+@api.post("/rewards/redeem-cash")
+async def redeem_cash(payload: CashRedeem, user: dict = Depends(require_verified_email)):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    if not org or not org.get("cash_redemption_enabled", True):
+        raise HTTPException(400, "Cash redemption is not enabled for your organization")
+
+    rate = org.get("credit_value_inr", 5)
+    cash_inr = payload.credits * rate
+    redemption = await _redeem_credits(
+        user, payload.credits, f"Cash payout (Cashify) — ₹{cash_inr:,}",
+        None, "cash", {"cash_inr": cash_inr, "cashify": True},
+    )
+    await log_audit(user["org_id"], user["id"], "cash_redeemed", user["id"],
+                    {"credits": payload.credits, "cash_inr": cash_inr})
     return redemption
 
 
@@ -1021,7 +1215,16 @@ async def audit_logs(user: dict = Depends(require_role("admin", "manager"))):
 
 @api.get("/health")
 async def health():
-    return {"ok": True, "ts": now_iso()}
+    db_ok = False
+    try:
+        await client.admin.command("ping")
+        db_ok = True
+    except Exception as e:
+        logger.error(f"Health check DB ping failed: {e}")
+    body = {"ok": db_ok, "db": db_ok, "environment": ENVIRONMENT, "ts": now_iso()}
+    if not db_ok:
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 # ----- Seed -----
@@ -1035,7 +1238,7 @@ async def seed():
         org_id = new_id()
         await db.organizations.insert_one({
             "id": org_id, "name": os.environ.get("SEED_ORG_NAME", "Acme Corp"),
-            "domain": domain, "logo": None, "credit_value_inr": 5,
+            "domain": domain, "logo": None, "credit_value_inr": 5, "cash_redemption_enabled": True,
             "categories": DEFAULT_CATEGORIES.copy(), "departments": DEFAULT_DEPARTMENTS.copy(),
             "created_at": now_iso(),
         })
@@ -1062,6 +1265,7 @@ async def seed():
             if not verify_password(pwd, existing["password_hash"]):
                 await db.users.update_one({"email": email},
                                           {"$set": {"password_hash": hash_password(pwd)}})
+            await db.users.update_one({"email": email}, {"$set": {"email_verified": True}})
             continue
         uid = new_id()
         await db.users.insert_one({
@@ -1070,7 +1274,7 @@ async def seed():
             "department": dept, "designation": designation,
             "expertise_tags": skills, "skills": skills, "avatar_url": avatar,
             "reputation_score": 0, "credits_earned": 0, "credits_redeemed": 0,
-            "badges": [], "created_at": now_iso(),
+            "badges": [], "email_verified": True, "created_at": now_iso(),
         })
         user_ids[email] = uid
 
@@ -1143,9 +1347,11 @@ async def seed():
     logger.info("Seed complete")
 
 
-@app.on_event("startup")
-async def startup():
-    # indexes
+async def _ensure_indexes():
+    await db.users.update_many(
+        {"email_verified": {"$exists": False}},
+        {"$set": {"email_verified": True}},
+    )
     await db.users.create_index("email", unique=True)
     await db.users.create_index("org_id")
     await db.organizations.create_index("domain", unique=True)
@@ -1155,32 +1361,42 @@ async def startup():
     await db.transactions.create_index([("org_id", 1), ("destination_user", 1)])
     await db.notifications.create_index([("user_id", 1), ("timestamp", -1)])
     await db.files.create_index("id", unique=True)
+    await db.email_verification_tokens.create_index("user_id")
+    await db.email_verification_tokens.create_index("token_hash", unique=True)
+    await db.email_verification_tokens.create_index(
+        "expires_at", expireAfterSeconds=0
+    )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await _ensure_indexes()
     init_storage()
-    await seed()
-    logger.info("HiveMind backend ready.")
-
-
-@app.on_event("shutdown")
-async def shutdown():
+    if SEED_DEMO_DATA:
+        await seed()
+    else:
+        logger.info("Demo seed skipped (SEED_DEMO_DATA not enabled)")
+    logger.info("Jugaad backend ready (%s).", ENVIRONMENT)
+    yield
     client.close()
 
 
+app = FastAPI(title="Jugaad API", lifespan=lifespan)
 app.include_router(api)
 
-origins = os.environ.get("CORS_ORIGINS", "*")
-if origins == "*":
-    # cookies with credentials require explicit origins — use regex to allow all
+_cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
+if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=".*",
+        allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-else:
+elif ENVIRONMENT != "production":
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in origins.split(",")],
+        allow_origin_regex=".*",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Users, Tags, Settings as Sett, Activity, Plus } from "lucide-react";
+import { Users, Tags, Settings as Sett, Activity, Plus, Gift } from "lucide-react";
 import { initials, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -23,17 +23,24 @@ export default function Admin() {
   const [cats, setCats] = useState([]);
   const [logs, setLogs] = useState([]);
   const [newCat, setNewCat] = useState("");
-  const [orgForm, setOrgForm] = useState({ name: "", credit_value_inr: 5 });
+  const [orgForm, setOrgForm] = useState({ name: "", credit_value_inr: 5, cash_redemption_enabled: true });
+  const [rewards, setRewards] = useState([]);
+  const [rewardForm, setRewardForm] = useState({ name: "", credits: 100, image: "", stock: 50 });
 
   const load = async () => {
-    const [a, b, c] = await Promise.all([
+    const [a, b, c, d] = await Promise.all([
       api.get("/users"), api.get("/org/categories"), api.get("/audit-logs"),
+      api.get("/rewards/admin"),
     ]);
-    setUsers(a.data); setCats(b.data); setLogs(c.data);
+    setUsers(a.data); setCats(b.data); setLogs(c.data); setRewards(d.data);
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    if (org) setOrgForm({ name: org.name, credit_value_inr: org.credit_value_inr || 5 });
+    if (org) setOrgForm({
+      name: org.name,
+      credit_value_inr: org.credit_value_inr || 5,
+      cash_redemption_enabled: org.cash_redemption_enabled !== false,
+    });
   }, [org]);
 
   if (user?.role !== "admin") return <div className="text-sm text-slate-500">Admin only.</div>;
@@ -57,8 +64,36 @@ export default function Admin() {
 
   const saveOrg = async () => {
     try {
-      await api.patch("/org", { name: orgForm.name, credit_value_inr: Number(orgForm.credit_value_inr) });
+      await api.patch("/org", {
+        name: orgForm.name,
+        credit_value_inr: Number(orgForm.credit_value_inr),
+        cash_redemption_enabled: orgForm.cash_redemption_enabled,
+      });
       toast.success("Organization updated");
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+  };
+
+  const addReward = async () => {
+    if (!rewardForm.name.trim()) return toast.error("Reward name is required");
+    try {
+      await api.post("/rewards", {
+        name: rewardForm.name.trim(),
+        credits: Number(rewardForm.credits),
+        image: rewardForm.image.trim() || null,
+        stock: Number(rewardForm.stock),
+        reward_type: "catalog",
+      });
+      setRewardForm({ name: "", credits: 100, image: "", stock: 50 });
+      load();
+      toast.success("Reward added to catalog");
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+  };
+
+  const toggleReward = async (reward) => {
+    try {
+      await api.patch(`/rewards/${reward.id}`, { active: !reward.active });
+      load();
+      toast.success(reward.active ? "Reward deactivated" : "Reward activated");
     } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
   };
 
@@ -74,6 +109,7 @@ export default function Admin() {
         <TabsList>
           <TabsTrigger value="users" data-testid="admin-tab-users"><Users className="h-4 w-4 mr-1" /> Users</TabsTrigger>
           <TabsTrigger value="categories" data-testid="admin-tab-categories"><Tags className="h-4 w-4 mr-1" /> Categories</TabsTrigger>
+          <TabsTrigger value="rewards" data-testid="admin-tab-rewards"><Gift className="h-4 w-4 mr-1" /> Rewards</TabsTrigger>
           <TabsTrigger value="settings" data-testid="admin-tab-settings"><Sett className="h-4 w-4 mr-1" /> Settings</TabsTrigger>
           <TabsTrigger value="audit" data-testid="admin-tab-audit"><Activity className="h-4 w-4 mr-1" /> Audit log</TabsTrigger>
         </TabsList>
@@ -127,6 +163,59 @@ export default function Admin() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="rewards" className="mt-6 space-y-6">
+          <Card className="border-slate-200">
+            <CardContent className="p-6">
+              <h3 className="font-display text-lg font-semibold mb-4">Add reward to catalog</h3>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field label="Reward name">
+                  <Input value={rewardForm.name} onChange={(e) => setRewardForm({ ...rewardForm, name: e.target.value })}
+                         placeholder="Amazon Gift Card ₹500" data-testid="admin-reward-name" />
+                </Field>
+                <Field label="Credits required">
+                  <Input type="number" min={1} value={rewardForm.credits}
+                         onChange={(e) => setRewardForm({ ...rewardForm, credits: e.target.value })}
+                         data-testid="admin-reward-credits" />
+                </Field>
+                <Field label="Stock">
+                  <Input type="number" min={0} value={rewardForm.stock}
+                         onChange={(e) => setRewardForm({ ...rewardForm, stock: e.target.value })}
+                         data-testid="admin-reward-stock" />
+                </Field>
+                <Field label="Image URL (optional)">
+                  <Input value={rewardForm.image} onChange={(e) => setRewardForm({ ...rewardForm, image: e.target.value })}
+                         placeholder="https://..." data-testid="admin-reward-image" />
+                </Field>
+              </div>
+              <Button onClick={addReward} className="mt-4 bg-blue-600 hover:bg-blue-700" data-testid="admin-add-reward-btn">
+                <Plus className="h-4 w-4 mr-1" /> Add reward
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardContent className="p-0">
+              <div className="divide-y divide-slate-200">
+                {rewards.filter((r) => r.reward_type !== "cash").map((r) => (
+                  <div key={r.id} className="flex items-center gap-4 p-4" data-testid={`admin-reward-${r.id}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold">{r.name}</div>
+                      <div className="text-xs text-slate-500">{r.credits}c · {r.stock} in stock</div>
+                    </div>
+                    <Badge variant={r.active ? "default" : "outline"}>{r.active ? "Active" : "Inactive"}</Badge>
+                    <Button size="sm" variant="outline" onClick={() => toggleReward(r)} data-testid={`toggle-reward-${r.id}`}>
+                      {r.active ? "Deactivate" : "Activate"}
+                    </Button>
+                  </div>
+                ))}
+                {rewards.filter((r) => r.reward_type !== "cash").length === 0 && (
+                  <div className="p-8 text-center text-sm text-slate-500">No rewards yet. Add one above.</div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="settings" className="mt-6">
           <Card className="border-slate-200">
             <CardContent className="p-6 max-w-xl space-y-4">
@@ -135,8 +224,18 @@ export default function Admin() {
               </Field>
               <Field label="Credit valuation (₹ per credit)">
                 <Input type="number" value={orgForm.credit_value_inr} onChange={(e) => setOrgForm({ ...orgForm, credit_value_inr: e.target.value })} data-testid="settings-credit-value" />
-                <p className="text-xs text-slate-500 mt-1">1 credit = ₹{orgForm.credit_value_inr}. Used in reward valuation.</p>
+                <p className="text-xs text-slate-500 mt-1">1 credit = ₹{orgForm.credit_value_inr}. Used for Cashify cash payouts.</p>
               </Field>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={orgForm.cash_redemption_enabled}
+                  onChange={(e) => setOrgForm({ ...orgForm, cash_redemption_enabled: e.target.checked })}
+                  data-testid="settings-cashify-enabled"
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                <span className="text-sm">Allow employees to redeem credits as cash (Cashify)</span>
+              </label>
               <Button onClick={saveOrg} className="bg-blue-600 hover:bg-blue-700" data-testid="settings-save">Save settings</Button>
             </CardContent>
           </Card>

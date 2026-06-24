@@ -7,6 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Hexagon, ArrowRight, AlertCircle } from "lucide-react";
 import { formatApiError } from "@/lib/api";
+import { toast } from "sonner";
+
+const SHOW_DEMO = process.env.REACT_APP_SHOW_DEMO_HINTS === "true";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -15,10 +18,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // login
-  const [li, setLi] = useState({ email: "admin@acme.com", password: "Admin@123" });
-  // employee register
-  const [re, setRe] = useState({ org_domain: "acme.com", name: "", email: "", password: "", department: "Engineering" });
+  const [li, setLi] = useState({ email: "", password: "" });
+  const [re, setRe] = useState({ org_domain: "", name: "", email: "", password: "", department: "Engineering" });
   // org register
   const [ro, setRo] = useState({ org_name: "", org_domain: "", admin_name: "", admin_email: "", admin_password: "" });
 
@@ -27,9 +28,15 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      if (tab === "login") await login(li.email, li.password);
-      else if (tab === "employee") await register(re);
-      else await registerOrg(ro);
+      if (tab === "login") {
+        await login(li.email, li.password);
+      } else if (tab === "employee") {
+        await register(re);
+        toast.success("Account created. Check your email to verify your address.");
+      } else {
+        await registerOrg(ro);
+        toast.success("Organization created. Check your email to verify your address.");
+      }
       navigate("/app");
     } catch (err) {
       setError(formatApiError(err.response?.data?.detail) || err.message);
@@ -46,7 +53,7 @@ export default function Login() {
           <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 grid place-items-center text-white">
             <Hexagon className="h-5 w-5" />
           </div>
-          <span className="font-display font-bold text-lg">HiveMind</span>
+          <span className="font-display font-bold text-lg">Jugaad</span>
         </Link>
 
         <div className="flex-1 grid place-items-center">
@@ -84,11 +91,13 @@ export default function Login() {
                            data-testid="login-password-input"
                            onChange={(e) => setLi({ ...li, password: e.target.value })} />
                   </Field>
-                  <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600 font-mono">
-                    <div className="font-semibold text-slate-800 mb-1">Demo accounts</div>
-                    admin@acme.com / Admin@123<br />
-                    priya@acme.com / Priya@123
-                  </div>
+                  {SHOW_DEMO && (
+                    <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600 font-mono">
+                      <div className="font-semibold text-slate-800 mb-1">Demo accounts</div>
+                      admin@acme.com / Admin@123<br />
+                      priya@acme.com / Priya@123
+                    </div>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="employee" className="space-y-4 mt-0">
@@ -158,7 +167,7 @@ export default function Login() {
         </div>
 
         <div className="text-xs text-slate-500 self-start">
-          © {new Date().getFullYear()} HiveMind · Internal Contribution Economy
+          © {new Date().getFullYear()} Jugaad · Internal Contribution Economy
         </div>
       </div>
 
@@ -181,7 +190,7 @@ export default function Login() {
           </h2>
           <p className="mt-4 text-slate-300 max-w-md">
             Post a request. Get matched. Earn credits. Redeem rewards.
-            HiveMind unlocks the smartest person you didn't know worked here.
+            Jugaad unlocks the smartest person you didn't know worked here.
           </p>
           <div className="mt-8 grid grid-cols-3 gap-6 max-w-md">
             <Stat k="2.4k" v="Requests solved" />

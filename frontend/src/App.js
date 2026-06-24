@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
-import ProtectedRoute from "@/components/ProtectedRoute";
+import ProtectedRoute, { AdminRoute } from "@/components/ProtectedRoute";
 import AppShell from "@/components/AppShell";
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
@@ -13,6 +13,7 @@ import Leaderboard from "@/pages/Leaderboard";
 import Rewards from "@/pages/Rewards";
 import Profile from "@/pages/Profile";
 import Admin from "@/pages/Admin";
+import VerifyEmail from "@/pages/VerifyEmail";
 import "@/App.css";
 
 function RedirectIfAuth({ children }) {
@@ -28,6 +29,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Landing />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/login" element={<RedirectIfAuth><Login /></RedirectIfAuth>} />
           <Route
             path="/app/*"
@@ -37,7 +39,7 @@ export default function App() {
                   <Routes>
                     <Route index element={<Dashboard />} />
                     <Route path="board" element={<Board />} />
-                    <Route path="requests/new" element={<NewRequest />} />
+                    <Route path="requests/new" element={<AdminRoute><NewRequest /></AdminRoute>} />
                     <Route path="requests/:id" element={<RequestDetail />} />
                     <Route path="leaderboard" element={<Leaderboard />} />
                     <Route path="rewards" element={<Rewards />} />

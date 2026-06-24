@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import api from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,7 @@ import { initials, statusLabel, STATUSES, timeAgo } from "@/lib/utils";
 const COLUMNS = STATUSES.filter((s) => s.key !== "rejected");
 
 export default function Board() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState([]);
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState(params.get("q") || "");
@@ -53,9 +55,11 @@ export default function Board() {
           <h1 className="font-display text-4xl font-bold tracking-tighter mt-2">Pipeline</h1>
           <p className="text-slate-600 mt-1">Every open ask in the organization, by stage.</p>
         </div>
-        <Button asChild data-testid="board-create-btn" className="bg-blue-600 hover:bg-blue-700">
-          <Link to="/app/requests/new"><Plus className="h-4 w-4 mr-1" /> New request</Link>
-        </Button>
+        {user?.role === "admin" && (
+          <Button asChild data-testid="board-create-btn" className="bg-blue-600 hover:bg-blue-700">
+            <Link to="/app/requests/new"><Plus className="h-4 w-4 mr-1" /> New request</Link>
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3 items-center">

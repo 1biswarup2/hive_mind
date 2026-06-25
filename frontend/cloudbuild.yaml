@@ -1,0 +1,14 @@
+# Builds the frontend image in Cloud Build, injecting the backend URL at
+# build time (CRA bakes REACT_APP_BACKEND_URL into the static bundle).
+# Invoked by deploy-gcp.sh with _BACKEND_URL and _IMAGE substitutions.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - REACT_APP_BACKEND_URL=${_BACKEND_URL}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}

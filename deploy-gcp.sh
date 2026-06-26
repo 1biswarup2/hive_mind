@@ -94,9 +94,10 @@ else
   CORS_ORIGINS="${FRONTEND_URL}"
 fi
 echo ">> Restricting backend CORS to ${CORS_ORIGINS}..."
+# Values may contain commas — use ^:^ as the pair separator (see gcloud topic escaping).
 gcloud run services update hivemind-backend \
   --region "${REGION}" --project "${PROJECT_ID}" \
-  --update-env-vars "CORS_ORIGINS=${CORS_ORIGINS}"
+  --update-env-vars=^:^CORS_ORIGINS="${CORS_ORIGINS}"
 
 echo ""
 echo "Done."

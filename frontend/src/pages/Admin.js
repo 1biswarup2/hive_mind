@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Users, Tags, Settings as Sett, Activity, Plus, Gift } from "lucide-react";
+import { Users, Tags, Settings as Sett, Activity, Plus, Gift, Receipt } from "lucide-react";
 import { initials, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -26,13 +26,15 @@ export default function Admin() {
   const [orgForm, setOrgForm] = useState({ name: "", credit_value_inr: 5, cash_redemption_enabled: true });
   const [rewards, setRewards] = useState([]);
   const [rewardForm, setRewardForm] = useState({ name: "", credits: 100, image: "", stock: 50 });
+  const [redemptions, setRedemptions] = useState([]);
 
   const load = async () => {
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c, d, e] = await Promise.all([
       api.get("/users"), api.get("/org/categories"), api.get("/audit-logs"),
-      api.get("/rewards/admin"),
+      api.get("/rewards/admin"), api.get("/redemptions/admin"),
     ]);
     setUsers(a.data); setCats(b.data); setLogs(c.data); setRewards(d.data);
+    setRedemptions(e.data);
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
@@ -46,6 +48,7 @@ export default function Admin() {
   if (user?.role !== "admin") return <div className="text-sm text-slate-500">Admin only.</div>;
 
   const changeRole = async (uid, role) => {
+    if (uid === user.id) return toast.error("You cannot change your own role");
     try {
       await api.patch(`/users/${uid}/role`, { role });
       toast.success("Role updated");
@@ -89,11 +92,32 @@ export default function Admin() {
     } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
   };
 
+  const setRedemptionStatus = async (id, status) => {
+    try {
+      await api.patch(`/redemptions/${id}/status`, { status });
+      load();
+      toast.success(
+        status === "fulfilled" ? "Redemption marked fulfilled"
+          : status === "rejected" ? "Redemption rejected — credits refunded"
+          : "Redemption reopened"
+      );
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+  };
+
   const toggleReward = async (reward) => {
     try {
       await api.patch(`/rewards/${reward.id}`, { active: !reward.active });
       load();
       toast.success(reward.active ? "Reward deactivated" : "Reward activated");
+    } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
+  };
+
+  const deleteReward = async (reward) => {
+    if (!window.confirm(`Delete "${reward.name}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/rewards/${reward.id}`);
+      load();
+      toast.success("Reward deleted");
     } catch (e) { toast.error(formatApiError(e.response?.data?.detail) || e.message); }
   };
 
@@ -110,6 +134,7 @@ export default function Admin() {
           <TabsTrigger value="users" data-testid="admin-tab-users"><Users className="h-4 w-4 mr-1" /> Users</TabsTrigger>
           <TabsTrigger value="categories" data-testid="admin-tab-categories"><Tags className="h-4 w-4 mr-1" /> Categories</TabsTrigger>
           <TabsTrigger value="rewards" data-testid="admin-tab-rewards"><Gift className="h-4 w-4 mr-1" /> Rewards</TabsTrigger>
+          <TabsTrigger value="redemptions" data-testid="admin-tab-redemptions"><Receipt className="h-4 w-4 mr-1" /> Redeem activity</TabsTrigger>
           <TabsTrigger value="settings" data-testid="admin-tab-settings"><Sett className="h-4 w-4 mr-1" /> Settings</TabsTrigger>
           <TabsTrigger value="audit" data-testid="admin-tab-audit"><Activity className="h-4 w-4 mr-1" /> Audit log</TabsTrigger>
         </TabsList>
@@ -125,11 +150,11 @@ export default function Admin() {
                       <AvatarFallback>{initials(u.name)}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold">{u.name}</div>
+                      <div className="font-semibold">{u.name}{u.id === user.id && <span className="ml-1 text-xs font-normal text-slate-400">(you)</span>}</div>
                       <div className="text-xs text-slate-500">{u.email} · {u.department}</div>
                     </div>
                     <div className="font-mono text-xs text-slate-500">{u.credits_earned}c earned</div>
-                    <Select value={u.role} onValueChange={(v) => changeRole(u.id, v)}>
+                    <Select value={u.role} onValueChange={(v) => changeRole(u.id, v)} disabled={u.id === user.id}>
                       <SelectTrigger className="w-32" data-testid={`role-select-${u.id}`}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
@@ -206,10 +231,60 @@ export default function Admin() {
                     <Button size="sm" variant="outline" onClick={() => toggleReward(r)} data-testid={`toggle-reward-${r.id}`}>
                       {r.active ? "Deactivate" : "Activate"}
                     </Button>
+                    <Button size="sm" variant="destructive" onClick={() => deleteReward(r)} data-testid={`delete-reward-${r.id}`}>
+                      Delete
+                    </Button>
                   </div>
                 ))}
                 {rewards.filter((r) => r.reward_type !== "cash").length === 0 && (
                   <div className="p-8 text-center text-sm text-slate-500">No rewards yet. Add one above.</div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="redemptions" className="mt-6">
+          <Card className="border-slate-200">
+            <CardContent className="p-0">
+              <div className="divide-y divide-slate-200 max-h-[600px] overflow-y-auto">
+                {redemptions.map((r) => (
+                  <div key={r.id} className="flex items-center gap-4 p-4" data-testid={`admin-redemption-${r.id}`}>
+                    <Avatar className="h-9 w-9">
+                      <AvatarImage src={r.employee?.avatar_url || ""} />
+                      <AvatarFallback>{initials(r.employee?.name || "?")}</AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{r.employee?.name || "—"}</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {r.employee?.department || "—"} · {timeAgo(r.created_at)}
+                      </div>
+                    </div>
+                    <div className="min-w-0 hidden sm:block">
+                      <div className="text-sm truncate">{r.reward_name}</div>
+                      <div className="text-xs text-slate-500">
+                        {r.credits}c{r.redemption_type === "cash" && r.cash_inr ? ` · ₹${r.cash_inr.toLocaleString()}` : ""}
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="capitalize">{r.redemption_type}</Badge>
+                    <Badge
+                      variant={r.status === "fulfilled" ? "default" : r.status === "rejected" ? "destructive" : "outline"}
+                      className="capitalize"
+                    >
+                      {r.status}
+                    </Badge>
+                    <Select value={r.status} onValueChange={(v) => setRedemptionStatus(r.id, v)}>
+                      <SelectTrigger className="w-32" data-testid={`redemption-status-${r.id}`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">pending</SelectItem>
+                        <SelectItem value="fulfilled">fulfilled</SelectItem>
+                        <SelectItem value="rejected">rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+                {redemptions.length === 0 && (
+                  <div className="p-8 text-center text-sm text-slate-500">No redemptions yet.</div>
                 )}
               </div>
             </CardContent>

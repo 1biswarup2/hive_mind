@@ -32,7 +32,7 @@ export default function AppShell({ children }) {
   const resendVerification = async () => {
     setResending(true);
     try {
-      await api.post("/auth/resend-verification");
+      await api.post("/auth/resend-verification", { email: user.email });
       toast.success("Verification email sent. Check your inbox.");
     } catch (err) {
       toast.error(formatApiError(err.response?.data?.detail) || "Could not resend email");

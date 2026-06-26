@@ -273,6 +273,10 @@ class VerifyEmailIn(BaseModel):
     token: str
 
 
+class ResendIn(BaseModel):
+    email: EmailStr
+
+
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     department: Optional[str] = None
@@ -346,6 +350,10 @@ class RewardRedeem(BaseModel):
 
 class CashRedeem(BaseModel):
     credits: int = Field(ge=100, description="Minimum 100 credits for cash payout")
+
+
+class RedemptionStatusUpdate(BaseModel):
+    status: str = Field(description="pending | fulfilled | rejected")
 
 
 # ----- Storage -----
@@ -490,11 +498,12 @@ async def register_org(payload: OrgRegister, request: Request, response: Respons
     raw_token = await issue_verification_token(user_id, email)
     background_tasks.add_task(_send_verification_email_task, email, payload.admin_name, raw_token)
 
-    access = create_access_token(user_id, org_id)
-    refresh = create_refresh_token(user_id, org_id)
-    set_auth_cookies(response, access, refresh)
     await log_audit(org_id, user_id, "org_created", org_id, {"name": payload.org_name})
-    return {"user": public_user(user), "org": {k: v for k, v in org.items() if k != "_id"}}
+    return {
+        "verification_required": True,
+        "email": email,
+        "message": "Organization created. Check your email to verify your address before signing in.",
+    }
 
 
 @api.post("/auth/register")
@@ -523,11 +532,12 @@ async def register_user(payload: UserRegister, request: Request, response: Respo
     raw_token = await issue_verification_token(user_id, email)
     background_tasks.add_task(_send_verification_email_task, email, payload.name, raw_token)
 
-    access = create_access_token(user_id, org["id"])
-    refresh = create_refresh_token(user_id, org["id"])
-    set_auth_cookies(response, access, refresh)
     await log_audit(org["id"], user_id, "user_registered", user_id)
-    return {"user": public_user(user), "org": org}
+    return {
+        "verification_required": True,
+        "email": email,
+        "message": "Account created. Check your email to verify your address before signing in.",
+    }
 
 
 @api.post("/auth/login")
@@ -537,6 +547,8 @@ async def login(payload: LoginIn, request: Request, response: Response):
     user = await db.users.find_one({"email": email}, {"_id": 0})
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
+    if REQUIRE_EMAIL_VERIFICATION and not user.get("email_verified", False):
+        raise HTTPException(403, "Please verify your email before signing in. Check your inbox for the verification link.")
     access = create_access_token(user["id"], user["org_id"])
     refresh = create_refresh_token(user["id"], user["org_id"])
     set_auth_cookies(response, access, refresh)
@@ -591,14 +603,14 @@ async def verify_email(payload: VerifyEmailIn):
 
 
 @api.post("/auth/resend-verification")
-async def resend_verification(request: Request, background_tasks: BackgroundTasks,
-                              user: dict = Depends(get_current_user)):
+async def resend_verification(payload: ResendIn, request: Request, background_tasks: BackgroundTasks):
     check_rate_limit(request)
-    if user.get("email_verified", True):
-        return {"ok": True, "message": "Email already verified"}
-    raw_token = await issue_verification_token(user["id"], user["email"])
-    background_tasks.add_task(_send_verification_email_task, user["email"], user.get("name", ""), raw_token)
-    return {"ok": True, "message": "Verification email sent"}
+    email = payload.email.lower().strip()
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if user and not user.get("email_verified", False):
+        raw_token = await issue_verification_token(user["id"], email)
+        background_tasks.add_task(_send_verification_email_task, email, user.get("name", ""), raw_token)
+    return {"ok": True, "message": "If that account exists and is unverified, a verification email has been sent."}
 
 
 # ===== ORG =====
@@ -681,6 +693,8 @@ async def update_me(payload: UserUpdate, user: dict = Depends(get_current_user))
 @api.patch("/users/{user_id}/role")
 async def change_role(user_id: str, payload: RoleUpdate,
                       user: dict = Depends(require_role("admin"))):
+    if user_id == user["id"]:
+        raise HTTPException(403, "You cannot change your own role")
     target = await db.users.find_one({"id": user_id, "org_id": user["org_id"]})
     if not target:
         raise HTTPException(404, "User not found")
@@ -800,6 +814,7 @@ async def claim_request(rid: str, user: dict = Depends(require_verified_email)):
             "status": "claimed", "claimed_by": user["id"],
             "claimed_at": now_iso(), "updated_at": now_iso(),
         }},
+        projection={"_id": 0},
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
@@ -886,11 +901,16 @@ async def review_solution(sid: str, payload: ReviewAction, user: dict = Depends(
         await db.requests_col.update_one({"id": r["id"]}, {"$set": {
             "status": "completed", "completed_at": now_iso(), "updated_at": now_iso(),
         }})
-        await award_credits(user["org_id"], s["contributor_id"], r["bounty_credits"],
-                            r["id"], f"Solved: {r['title']}")
-        await recompute_user_stats(s["contributor_id"])
-        await notify(user["org_id"], s["contributor_id"],
-                     f"Your solution was approved! +{r['bounty_credits']} credits", f"/requests/{r['id']}")
+        contributor = await db.users.find_one({"id": s["contributor_id"]}, {"_id": 0, "role": 1})
+        if contributor and contributor.get("role") == "admin":
+            await notify(user["org_id"], s["contributor_id"],
+                         f"Your solution was approved: {r['title']}", f"/requests/{r['id']}")
+        else:
+            await award_credits(user["org_id"], s["contributor_id"], r["bounty_credits"],
+                                r["id"], f"Solved: {r['title']}")
+            await recompute_user_stats(s["contributor_id"])
+            await notify(user["org_id"], s["contributor_id"],
+                         f"Your solution was approved! +{r['bounty_credits']} credits", f"/requests/{r['id']}")
     elif payload.action == "reject":
         await db.requests_col.update_one({"id": r["id"]}, {"$set": {
             "status": "open", "claimed_by": None, "claimed_at": None, "updated_at": now_iso(),
@@ -981,6 +1001,16 @@ async def update_reward(reward_id: str, payload: RewardUpdate,
         await db.rewards.update_one({"id": reward_id}, {"$set": upd})
     await log_audit(user["org_id"], user["id"], "reward_updated", reward_id, upd)
     return await db.rewards.find_one({"id": reward_id}, {"_id": 0})
+
+
+@api.delete("/rewards/{reward_id}")
+async def delete_reward(reward_id: str, user: dict = Depends(require_role("admin"))):
+    reward = await db.rewards.find_one({"id": reward_id, "org_id": user["org_id"]})
+    if not reward:
+        raise HTTPException(404, "Reward not found")
+    await db.rewards.delete_one({"id": reward_id, "org_id": user["org_id"]})
+    await log_audit(user["org_id"], user["id"], "reward_deleted", reward_id, {"name": reward.get("name")})
+    return {"ok": True}
 
 
 async def _redeem_credits(user: dict, credits: int, reward_name: str, reward_id: Optional[str],
@@ -1075,6 +1105,73 @@ async def my_redemptions(user: dict = Depends(get_current_user)):
     return items
 
 
+@api.get("/redemptions/admin")
+async def list_redemptions_admin(user: dict = Depends(require_role("admin"))):
+    items = await db.redemptions.find({"org_id": user["org_id"]}, {"_id": 0}) \
+        .sort("created_at", -1).to_list(500)
+    user_ids = list({i["user_id"] for i in items if i.get("user_id")})
+    users = await db.users.find(
+        {"id": {"$in": user_ids}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "department": 1, "avatar_url": 1},
+    ).to_list(1000)
+    umap = {u["id"]: u for u in users}
+    for i in items:
+        i["employee"] = umap.get(i.get("user_id"))
+    return items
+
+
+@api.patch("/redemptions/{redemption_id}/status")
+async def update_redemption_status(redemption_id: str, payload: RedemptionStatusUpdate,
+                                   user: dict = Depends(require_role("admin"))):
+    if payload.status not in {"pending", "fulfilled", "rejected"}:
+        raise HTTPException(400, "Invalid status")
+
+    redemption = await db.redemptions.find_one(
+        {"id": redemption_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not redemption:
+        raise HTTPException(404, "Redemption not found")
+
+    old_status = redemption.get("status", "pending")
+
+    # Refund credits (and restock catalog rewards) when moving into a rejected
+    # state from a non-rejected one. Guard against double refunds.
+    if payload.status == "rejected" and old_status != "rejected":
+        await db.users.update_one(
+            {"id": redemption["user_id"]},
+            {"$inc": {"credits_redeemed": -redemption["credits"]}},
+        )
+        if redemption.get("reward_id"):
+            await db.rewards.update_one(
+                {"id": redemption["reward_id"]}, {"$inc": {"stock": 1}})
+        await db.transactions.insert_one({
+            "id": new_id(), "org_id": user["org_id"],
+            "source_user": redemption["user_id"], "destination_user": None,
+            "credits": redemption["credits"], "transaction_type": "refund",
+            "reason": f"Refund (rejected): {redemption['reward_name']}",
+            "request_id": None, "timestamp": now_iso(),
+        })
+    # Re-deduct credits (and consume stock) if a previously rejected redemption
+    # is moved back to pending/fulfilled.
+    elif old_status == "rejected" and payload.status != "rejected":
+        await db.users.update_one(
+            {"id": redemption["user_id"]},
+            {"$inc": {"credits_redeemed": redemption["credits"]}},
+        )
+        if redemption.get("reward_id"):
+            await db.rewards.update_one(
+                {"id": redemption["reward_id"]}, {"$inc": {"stock": -1}})
+
+    result = await db.redemptions.find_one_and_update(
+        {"id": redemption_id, "org_id": user["org_id"]},
+        {"$set": {"status": payload.status, "updated_at": now_iso()}},
+        return_document=ReturnDocument.AFTER,
+    )
+    result.pop("_id", None)
+    await log_audit(user["org_id"], user["id"], "redemption_status_updated",
+                    redemption_id, {"status": payload.status, "from": old_status})
+    return result
+
+
 # ===== TRANSACTIONS =====
 @api.get("/transactions/me")
 async def my_transactions(user: dict = Depends(get_current_user)):
@@ -1089,7 +1186,7 @@ async def my_transactions(user: dict = Depends(get_current_user)):
 @api.get("/leaderboard")
 async def leaderboard(scope: str = "global", period: str = "all",
                       user: dict = Depends(get_current_user)):
-    flt = {"org_id": user["org_id"]}
+    flt = {"org_id": user["org_id"], "role": {"$ne": "admin"}}
     if scope == "department" and user.get("department"):
         flt["department"] = user["department"]
     users = await db.users.find(flt, {"_id": 0, "password_hash": 0}).to_list(1000)

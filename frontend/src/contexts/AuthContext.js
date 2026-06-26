@@ -34,15 +34,16 @@ export function AuthProvider({ children }) {
 
   const registerOrg = async (payload) => {
     const { data } = await api.post("/auth/register-org", payload);
-    setUser(data.user);
-    setOrg(data.org);
     return data;
   };
 
   const register = async (payload) => {
     const { data } = await api.post("/auth/register", payload);
-    setUser(data.user);
-    setOrg(data.org);
+    return data;
+  };
+
+  const resendVerification = async (email) => {
+    const { data } = await api.post("/auth/resend-verification", { email });
     return data;
   };
 
@@ -53,7 +54,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, org, loading, login, logout, register, registerOrg, refresh, setUser }}>
+    <AuthCtx.Provider value={{ user, org, loading, login, logout, register, registerOrg, resendVerification, refresh, setUser }}>
       {children}
     </AuthCtx.Provider>
   );

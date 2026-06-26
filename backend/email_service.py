@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Iterable
@@ -22,13 +23,19 @@ def _smtp_config() -> dict | None:
     host = os.environ.get("SMTP_HOST", "").strip()
     if not host:
         return None
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    truthy = ("1", "true", "yes")
+    # Implicit SSL (e.g. port 465). Defaults to true on 465 unless explicitly disabled.
+    use_ssl_env = os.environ.get("SMTP_USE_SSL")
+    use_ssl = use_ssl_env.lower() in truthy if use_ssl_env is not None else (port == 465)
     return {
         "host": host,
-        "port": int(os.environ.get("SMTP_PORT", "587")),
+        "port": port,
         "user": os.environ.get("SMTP_USER", "").strip(),
         "password": os.environ.get("SMTP_PASSWORD", ""),
         "from_addr": os.environ.get("SMTP_FROM", os.environ.get("SMTP_USER", "noreply@hivemind.local")),
-        "use_tls": os.environ.get("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
+        "use_tls": os.environ.get("SMTP_USE_TLS", "true").lower() in truthy,
+        "use_ssl": use_ssl,
     }
 
 
@@ -40,12 +47,19 @@ def _send_one(cfg: dict, to_addr: str, subject: str, html: str, text: str) -> No
     msg.attach(MIMEText(text, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html", "utf-8"))
 
-    with smtplib.SMTP(cfg["host"], cfg["port"], timeout=30) as smtp:
-        if cfg["use_tls"]:
-            smtp.starttls()
-        if cfg["user"]:
-            smtp.login(cfg["user"], cfg["password"])
-        smtp.sendmail(cfg["from_addr"], [to_addr], msg.as_string())
+    if cfg["use_ssl"]:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=30, context=context) as smtp:
+            if cfg["user"]:
+                smtp.login(cfg["user"], cfg["password"])
+            smtp.sendmail(cfg["from_addr"], [to_addr], msg.as_string())
+    else:
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=30) as smtp:
+            if cfg["use_tls"]:
+                smtp.starttls()
+            if cfg["user"]:
+                smtp.login(cfg["user"], cfg["password"])
+            smtp.sendmail(cfg["from_addr"], [to_addr], msg.as_string())
 
 
 def send_to_many(recipients: Iterable[str], subject: str, html: str, text: str) -> int:

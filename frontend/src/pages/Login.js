@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Hexagon, ArrowRight, AlertCircle } from "lucide-react";
+import { Hexagon, ArrowRight, AlertCircle, MailCheck } from "lucide-react";
 import { formatApiError } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -13,10 +13,15 @@ const SHOW_DEMO = process.env.REACT_APP_SHOW_DEMO_HINTS === "true";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, register, registerOrg } = useAuth();
+  const { login, register, registerOrg, resendVerification } = useAuth();
   const [tab, setTab] = useState("login");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // email pending verification after signup -> shows confirmation panel
+  const [pendingEmail, setPendingEmail] = useState("");
+  // email that tried to log in but is not verified -> shows inline resend
+  const [unverifiedEmail, setUnverifiedEmail] = useState("");
+  const [resending, setResending] = useState(false);
 
   const [li, setLi] = useState({ email: "", password: "" });
   const [re, setRe] = useState({ org_domain: "", name: "", email: "", password: "", department: "Engineering" });
@@ -26,22 +31,40 @@ export default function Login() {
   const submit = async (e) => {
     e.preventDefault();
     setError("");
+    setUnverifiedEmail("");
     setLoading(true);
     try {
       if (tab === "login") {
         await login(li.email, li.password);
+        navigate("/app");
       } else if (tab === "employee") {
         await register(re);
-        toast.success("Account created. Check your email to verify your address.");
+        setPendingEmail(re.email);
       } else {
         await registerOrg(ro);
-        toast.success("Organization created. Check your email to verify your address.");
+        setPendingEmail(ro.admin_email);
       }
-      navigate("/app");
     } catch (err) {
+      const status = err.response?.status;
+      if (tab === "login" && status === 403) {
+        setUnverifiedEmail(li.email);
+      }
       setError(formatApiError(err.response?.data?.detail) || err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResend = async (email) => {
+    if (!email) return;
+    setResending(true);
+    try {
+      await resendVerification(email);
+      toast.success("Verification email sent. Check your inbox.");
+    } catch (err) {
+      toast.error(formatApiError(err.response?.data?.detail) || "Could not resend email");
+    } finally {
+      setResending(false);
     }
   };
 
@@ -58,6 +81,38 @@ export default function Login() {
 
         <div className="flex-1 grid place-items-center">
           <div className="w-full max-w-md">
+            {pendingEmail ? (
+              <div className="text-center" data-testid="verify-pending">
+                <div className="h-14 w-14 rounded-2xl bg-blue-50 grid place-items-center mx-auto">
+                  <MailCheck className="h-7 w-7 text-blue-600" />
+                </div>
+                <h1 className="font-display text-3xl font-bold tracking-tight mt-6">Verify your email</h1>
+                <p className="mt-3 text-slate-600">
+                  We sent a verification link to{" "}
+                  <span className="font-semibold text-slate-900">{pendingEmail}</span>. Click the link in
+                  that email to activate your account, then sign in. The link expires in 1 hour.
+                </p>
+                <div className="flex flex-col gap-3 mt-8">
+                  <Button
+                    onClick={() => handleResend(pendingEmail)}
+                    disabled={resending}
+                    variant="outline"
+                    className="h-11"
+                    data-testid="verify-resend-btn"
+                  >
+                    {resending ? "Sending…" : "Resend verification email"}
+                  </Button>
+                  <Button
+                    onClick={() => { setPendingEmail(""); setTab("login"); }}
+                    className="bg-blue-600 hover:bg-blue-700 h-11"
+                    data-testid="verify-back-to-login"
+                  >
+                    Back to sign in
+                  </Button>
+                </div>
+              </div>
+            ) : (
+            <>
             <h1 className="font-display text-4xl font-bold tracking-tight">
               Welcome to the <span className="text-blue-600">hive</span>.
             </h1>
@@ -74,9 +129,22 @@ export default function Login() {
 
               <form onSubmit={submit} className="mt-6 space-y-4">
                 {error && (
-                  <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm" data-testid="auth-error">
-                    <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                    <span>{error}</span>
+                  <div className="flex flex-col gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm" data-testid="auth-error">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                    {unverifiedEmail && (
+                      <button
+                        type="button"
+                        onClick={() => handleResend(unverifiedEmail)}
+                        disabled={resending}
+                        className="self-start font-semibold underline underline-offset-2 hover:text-red-800 disabled:opacity-60"
+                        data-testid="login-resend-btn"
+                      >
+                        {resending ? "Sending…" : "Resend verification email"}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -163,6 +231,8 @@ export default function Login() {
                 </Button>
               </form>
             </Tabs>
+            </>
+            )}
           </div>
         </div>
 

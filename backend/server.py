@@ -10,6 +10,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import io
+import re
 import asyncio
 import time
 import uuid
@@ -41,7 +42,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from pymongo import ReturnDocument
 
-from email_service import notify_org_new_request, send_verification_email
+from email_service import notify_org_new_request, send_verification_email, send_invite_email
 
 # ----- Config -----
 JWT_ALGORITHM = "HS256"
@@ -236,6 +237,17 @@ async def _send_verification_email_task(email: str, name: str, raw_token: str):
     await asyncio.to_thread(send_verification_email, email, name, raw_token)
 
 
+async def _send_invite_email_task(email: str, name: str, temp_password: str, raw_token: str, org_name: str):
+    await asyncio.to_thread(send_invite_email, email, name, temp_password, raw_token, org_name)
+
+
+def _name_from_email(email: str) -> str:
+    """Extract a display name from the local part of an email address."""
+    local = email.split("@")[0]
+    parts = re.split(r"[._\-+]", local)
+    return " ".join(p.capitalize() for p in parts if p)
+
+
 def check_rate_limit(request: Request):
     """Simple in-memory rate limit for auth endpoints (per client IP)."""
     ip = request.client.host if request.client else "unknown"
@@ -288,6 +300,20 @@ class UserUpdate(BaseModel):
 
 class RoleUpdate(BaseModel):
     role: Literal["admin", "manager", "reviewer", "employee"]
+
+
+class BulkImportEntry(BaseModel):
+    email: EmailStr
+    department: Optional[str] = None
+
+
+class BulkImportRequest(BaseModel):
+    employees: List[BulkImportEntry]
+    bulk_department: Optional[str] = None
+
+
+class DepartmentCreate(BaseModel):
+    name: str
 
 
 class RequestCreate(BaseModel):
@@ -652,6 +678,19 @@ async def list_departments(user: dict = Depends(get_current_user)):
     return org.get("departments", DEFAULT_DEPARTMENTS)
 
 
+@api.post("/org/departments")
+async def add_department(payload: DepartmentCreate, user: dict = Depends(require_role("admin"))):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(400, "Department name cannot be empty")
+    await db.organizations.update_one(
+        {"id": user["org_id"]}, {"$addToSet": {"departments": name}}
+    )
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    await log_audit(user["org_id"], user["id"], "department_added", user["org_id"], {"name": name})
+    return org.get("departments", DEFAULT_DEPARTMENTS)
+
+
 # ===== USERS =====
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user),
@@ -702,6 +741,72 @@ async def change_role(user_id: str, payload: RoleUpdate,
     await log_audit(user["org_id"], user["id"], "role_changed", user_id, {"role": payload.role})
     u = await db.users.find_one({"id": user_id}, {"_id": 0})
     return public_user(u)
+
+
+@api.post("/users/bulk-import")
+async def bulk_import_users(
+    payload: BulkImportRequest,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(require_verified_admin),
+):
+    org = await db.organizations.find_one({"id": user["org_id"]}, {"_id": 0})
+    if not org:
+        raise HTTPException(404, "Organization not found")
+
+    org_domain = org["domain"].lower().strip()
+    default_dept = (org.get("departments") or DEFAULT_DEPARTMENTS)[0]
+
+    created, skipped, errors = [], [], []
+
+    for entry in payload.employees:
+        email = entry.email.lower().strip()
+
+        # Domain validation — only allow org's own domain
+        email_domain = email.split("@")[-1].lower()
+        if email_domain != org_domain:
+            errors.append({"email": email, "reason": f"Domain @{email_domain} not allowed (org domain: @{org_domain})"})
+            continue
+
+        # Skip duplicates
+        if await db.users.find_one({"email": email}):
+            skipped.append({"email": email, "reason": "Already registered"})
+            continue
+
+        name = _name_from_email(email)
+        department = (entry.department or payload.bulk_department or default_dept).strip()
+
+        temp_password = secrets.token_urlsafe(10)
+        user_id = new_id()
+        new_user_doc = {
+            "id": user_id, "org_id": org["id"], "email": email,
+            "name": name, "password_hash": hash_password(temp_password),
+            "role": "employee", "department": department,
+            "designation": None, "expertise_tags": [], "skills": [],
+            "avatar_url": None, "reputation_score": 0, "credits_earned": 0,
+            "credits_redeemed": 0, "badges": [], "email_verified": False,
+            "created_at": now_iso(),
+        }
+        await db.users.insert_one(new_user_doc)
+
+        raw_token = await issue_verification_token(user_id, email)
+        background_tasks.add_task(
+            _send_invite_email_task, email, name, temp_password, raw_token, org["name"]
+        )
+
+        created.append({"email": email, "name": name, "department": department})
+        await log_audit(org["id"], user["id"], "bulk_import_user", user_id, {"email": email, "department": department})
+
+    return {
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+        "summary": {
+            "total": len(payload.employees),
+            "created": len(created),
+            "skipped": len(skipped),
+            "errors": len(errors),
+        },
+    }
 
 
 # ===== REQUESTS =====
@@ -1473,12 +1578,12 @@ async def lifespan(_app: FastAPI):
         await seed()
     else:
         logger.info("Demo seed skipped (SEED_DEMO_DATA not enabled)")
-    logger.info("Jugaad backend ready (%s).", ENVIRONMENT)
+    logger.info("Jamoora backend ready (%s).", ENVIRONMENT)
     yield
     client.close()
 
 
-app = FastAPI(title="Jugaad API", lifespan=lifespan)
+app = FastAPI(title="Jamoora API", lifespan=lifespan)
 app.include_router(api)
 
 _cors_origins = os.environ.get("CORS_ORIGINS", "").strip()

@@ -13,7 +13,7 @@ fi
 docker compose up -d --build
 
 echo ""
-echo "Jugaad is starting."
+echo "Jamoora is starting."
 echo "  URL:  http://localhost:${APP_PORT:-80}"
 echo "  Health: http://localhost:${APP_PORT:-80}/api/health"
 echo ""

@@ -1,4 +1,4 @@
-"""SMTP email notifications for Jugaad."""
+"""SMTP email notifications for Jamoora."""
 import asyncio
 import logging
 import os
@@ -12,7 +12,7 @@ logger = logging.getLogger("hivemind.mail")
 
 
 def app_name() -> str:
-    return os.environ.get("APP_NAME", "Jugaad")
+    return os.environ.get("APP_NAME", "Jamoora")
 
 
 def mail_enabled() -> bool:
@@ -201,4 +201,65 @@ def send_verification_email(to_addr: str, name: str, raw_token: str) -> int:
     app_url = os.environ.get("APP_URL", "http://localhost:8090")
     verify_url = f"{app_url.rstrip('/')}/verify-email?token={raw_token}"
     subject, html, text = build_verification_email(name or "there", verify_url)
+    return send_to_many([to_addr], subject, html, text)
+
+
+def build_invite_email(
+    name: str,
+    email: str,
+    temp_password: str,
+    verify_url: str,
+    org_name: str,
+) -> tuple[str, str, str]:
+    brand = app_name()
+    subject = f"You've been invited to {org_name} on {brand}"
+    login_url = verify_url.split("/verify-email")[0] + "/login"
+    text = (
+        f"Hi {name},\n\n"
+        f"You've been added to {org_name} on {brand} by your admin.\n\n"
+        f"Your login details:\n"
+        f"  Email:    {email}\n"
+        f"  Password: {temp_password}\n\n"
+        f"First, verify your email address (required to access the platform):\n"
+        f"{verify_url}\n\n"
+        f"Then sign in at: {login_url}\n\n"
+        f"We recommend changing your password after your first login.\n"
+    )
+    html = f"""
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#0f172a">
+      <p style="font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#2563eb">
+        {org_name} · {brand}
+      </p>
+      <h2 style="margin:0 0 8px;font-size:22px">You're invited!</h2>
+      <p style="color:#475569;margin:0 0 16px">
+        Hi <strong>{name}</strong>, your admin has added you to <strong>{org_name}</strong> on {brand}.
+      </p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:20px">
+        <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#334155">Your login credentials</p>
+        <p style="margin:0 0 4px;font-size:14px">Email: <code style="background:#e2e8f0;padding:2px 6px;border-radius:4px">{email}</code></p>
+        <p style="margin:0;font-size:14px">Temporary password: <code style="background:#e2e8f0;padding:2px 6px;border-radius:4px">{temp_password}</code></p>
+      </div>
+      <p style="color:#475569;margin:0 0 16px;font-size:14px">
+        First, verify your email address to activate your account:
+      </p>
+      <a href="{verify_url}"
+         style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;
+                padding:12px 20px;border-radius:8px;font-weight:600">
+        Verify email &amp; activate account
+      </a>
+      <p style="margin-top:20px;font-size:13px;color:#475569">
+        After verifying, <a href="{login_url}" style="color:#2563eb">sign in here</a> and change your password in your profile settings.
+      </p>
+      <p style="margin-top:24px;font-size:12px;color:#94a3b8">
+        You received this because an admin at {org_name} added you to {brand}.
+      </p>
+    </div>
+    """
+    return subject, html, text
+
+
+def send_invite_email(to_addr: str, name: str, temp_password: str, raw_token: str, org_name: str) -> int:
+    app_url = os.environ.get("APP_URL", "http://localhost:8090")
+    verify_url = f"{app_url.rstrip('/')}/verify-email?token={raw_token}"
+    subject, html, text = build_invite_email(name or "there", to_addr, temp_password, verify_url, org_name)
     return send_to_many([to_addr], subject, html, text)

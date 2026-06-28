@@ -95,7 +95,7 @@ export default function AppShell({ children }) {
               <Hexagon className="h-5 w-5" />
             </div>
             <div className="font-display font-bold text-lg leading-none">
-              Jugaad
+              Jamoora
               <div className="text-[10px] font-mono text-slate-500 tracking-widest mt-0.5">
                 {org?.name?.toUpperCase()}
               </div>

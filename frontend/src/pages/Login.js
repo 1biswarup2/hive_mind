@@ -76,7 +76,7 @@ export default function Login() {
           <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 grid place-items-center text-white">
             <Hexagon className="h-5 w-5" />
           </div>
-          <span className="font-display font-bold text-lg">Jugaad</span>
+          <span className="font-display font-bold text-lg">Jamoora</span>
         </Link>
 
         <div className="flex-1 grid place-items-center">
@@ -237,7 +237,7 @@ export default function Login() {
         </div>
 
         <div className="text-xs text-slate-500 self-start">
-          © {new Date().getFullYear()} Jugaad · Internal Contribution Economy
+          © {new Date().getFullYear()} Jamoora · Internal Contribution Economy
         </div>
       </div>
 
@@ -260,7 +260,7 @@ export default function Login() {
           </h2>
           <p className="mt-4 text-slate-300 max-w-md">
             Post a request. Get matched. Earn credits. Redeem rewards.
-            Jugaad unlocks the smartest person you didn't know worked here.
+            Jamoora unlocks the smartest person you didn't know worked here.
           </p>
           <div className="mt-8 grid grid-cols-3 gap-6 max-w-md">
             <Stat k="2.4k" v="Requests solved" />

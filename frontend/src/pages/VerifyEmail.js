@@ -40,7 +40,7 @@ export default function VerifyEmail() {
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 grid place-items-center text-white">
             <Hexagon className="h-5 w-5" />
           </div>
-          <span className="font-display font-bold text-lg">Jugaad</span>
+          <span className="font-display font-bold text-lg">Jamoora</span>
         </Link>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">

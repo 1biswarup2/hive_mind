@@ -1,4 +1,4 @@
-# Jugaad — Internal Ticket Board
+# Jamoora — Internal Ticket Board
 
 Deploy-ready internal problem marketplace / ticket board for your organization.
 
@@ -92,7 +92,7 @@ SMTP_HOST=smtp.gmail.com                 # or your company SMTP
 SMTP_PORT=587
 SMTP_USER=notifications@yourcompany.com
 SMTP_PASSWORD=your-app-password
-SMTP_FROM=Jugaad <notifications@yourcompany.com>
+SMTP_FROM=Jamoora <notifications@yourcompany.com>
 SMTP_USE_TLS=true
 ```
 
